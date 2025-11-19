@@ -108,7 +108,7 @@ packaging==23.2
 pandas==2.3.3
 paramiko==2.9.3
 pillow==12.0.0
-protobuf==4.25.8
+protobuf==5.28.3
 psutil==5.9.0
 psycopg2-binary==2.9.10
 pyarrow==15.0.2
