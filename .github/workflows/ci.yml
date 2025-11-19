@@ -1,30 +1,117 @@
-name: CI Pipeline
+name: MLOps Security Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
   pull_request:
-    branches: [ "main" ]
 
 jobs:
-  build:
+
+  setup:
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          architecture: 'x64'
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r backend/requirements.txt
 
-      - name: Run tests
-        run: |
-          pytest -q
+    - name: Validate pre-trained model
+      run: |
+        python backend/ml/validate_model.py
+
+
+  scan_pipeline:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r backend/requirements.txt
+
+    - name: Run scans
+      run: |
+        python backend/scanners/code/scan_code.py
+        python backend/scanners/deps/scan_dependencies.py
+        python backend/scanners/model/scan_model.py
+        python backend/scanners/container/scan_container.py
+
+    - name: Upload scanning results
+      uses: actions/upload-artifact@v4
+      with:
+        name: scan-results
+        path: backend/reports/
+
+
+  unify_report:
+    runs-on: ubuntu-latest
+    needs: scan_pipeline
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download scanning results
+      uses: actions/download-artifact@v4
+      with:
+        name: scan-results
+        path: reports/
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: pip install -r backend/requirements.txt
+
+    - name: Unify reports
+      run: |
+        python backend/reports/unify_reports.py
+
+    - name: Upload unified report
+      uses: actions/upload-artifact@v4
+      with:
+        name: unified-report
+        path: backend/reports/unified_report.json
+
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: unify_report
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download unified report
+      uses: actions/download-artifact@v4
+      with:
+        name: unified-report
+        path: final-report/
+
+    - name: Install jq
+      run: sudo apt-get install -y jq
+
+    - name: Check for critical vulnerabilities
+      run: |
+        CRITICAL=$(jq '. | .. | select(.issue_severity=="CRITICAL")' final-report/unified_report.json)
+        if [ ! -z "$CRITICAL" ]; then
+          echo "🚨 Critical vulnerability detected! Deployment stopped."
+          exit 1
+        fi
+        echo "✅ No critical vulnerabilities. Deployment continues."
